@@ -60,7 +60,7 @@ stranger_responses = [
     "astrbot_plugin_zanwo",
     "Futureppo",
     "发送 赞我 自动点赞",
-    "1.0.8",
+    "1.0.9",  # 版本号微调以示更新
     "https://github.com/Futureppo/astrbot_plugin_zanwo",
 )
 class zanwo(Star):
@@ -76,8 +76,8 @@ class zanwo(Star):
         self.subscribed_users: list[str] = config.get("subscribed_users", [])
         # 点赞日期
         self.zanwo_date: Optional[str] = config.get("zanwo_date", None)
-        # 黑名单用户ID列表（字符串）
-        self.black_list: set[str] ={str(uid) for uid in config.get("black_list", [])
+        # 黑名单列表
+        self.black_list: list[str] = config.get("black_list", [])
 
     def _is_group_allowed(self, event: AiocqhttpMessageEvent) -> bool:
         group_id = event.get_group_id()
@@ -85,15 +85,13 @@ class zanwo(Star):
             return str(group_id) in self.white_list_groups
         return True
 
-    def _is_user_blacklisted(self, user_id: str) -> bool:
-        """检查用户是否在黑名单中"""
-        return str(user_id) in self.black_list
-
     async def _run_like(
         self, event: AiocqhttpMessageEvent, target_ids: list[str]
     ) -> Optional[str]:
         if not self._is_group_allowed(event):
             return None
+        # 过滤黑名单用户
+        target_ids = [uid for uid in target_ids if uid not in self.black_list]
         if not target_ids:
             return None
         return await self._like(event.bot, target_ids)
@@ -105,7 +103,8 @@ class zanwo(Star):
 
     async def _trigger_auto_like(self, client: CQHttp):
         today = datetime.now().date().strftime("%Y-%m-%d")
-        subscribed_users = list(self.subscribed_users)
+        # 过滤黑名单成员，避免自动点赞已拉黑用户
+        subscribed_users = [u for u in self.subscribed_users if u not in self.black_list]
         if not subscribed_users or self.zanwo_date == today:
             return
         self._save_zanwo_date(today)
@@ -133,13 +132,16 @@ class zanwo(Star):
         """
         replys = []
         for id in ids:
+            # 双重保险：实际点赞时再次跳过黑名单（理论上此处已过滤，但保留安全性）
+            if id in self.black_list:
+                continue
             total_likes = 0
             username = (await client.get_stranger_info(user_id=int(id))).get(
                 "nickname", "未知用户"
             )
             for _ in range(5):
                 try:
-                    await client.send_like(user_id=int(id), times=10)  # 点赞10次
+                    await client.send_like(user_id=int(id), times=10)
                     total_likes += 10
                 except aiocqhttp.exceptions.ActionFailed as e:
                     error_message = str(e)
@@ -153,7 +155,6 @@ class zanwo(Star):
 
             reply = random.choice(self.success_responses) if total_likes > 0 else error_reply
 
-            # 检查 reply 中是否包含占位符，并根据需要进行替换
             if "{username}" in reply:
                 reply = reply.replace("{username}", username)
             if "{total_likes}" in reply:
@@ -177,14 +178,9 @@ class zanwo(Star):
     @filter.regex(r"^赞.*")
     async def like_me(self, event: AiocqhttpMessageEvent):
         """给用户点赞"""
-        # 黑名单用户直接忽略，不回复也不点赞
-        sender_id = event.get_sender_id()
-        if self._is_user_blacklisted(sender_id):
-            return
-
         target_ids = []
         if event.message_str == "赞我":
-            target_ids.append(sender_id)
+            target_ids.append(event.get_sender_id())
         if not target_ids:
             target_ids = self.get_ats(event)
         result = await self._run_like(event, target_ids)
@@ -200,14 +196,9 @@ class zanwo(Star):
         Args:
             target(string): 点赞目标，可填 self、me、我，或明确的 QQ 号。未明确提供时默认给当前发言者点赞。
         """
-        # 黑名单用户直接忽略，不回复也不点赞
-        sender_id = event.get_sender_id()
-        if self._is_user_blacklisted(sender_id):
-            return
-
         normalized_target = target.strip().lower() if target else "self"
         if normalized_target in {"", "self", "me", "我", "自己", "我自己"}:
-            target_ids = [sender_id]
+            target_ids = [event.get_sender_id()]
         elif target.strip().isdigit():
             target_ids = [target.strip()]
         else:
@@ -215,7 +206,7 @@ class zanwo(Star):
 
         result = await self._run_like(event, target_ids)
         if not result:
-            return "当前会话不允许使用点赞功能。"
+            return "你已被拉黑或无法点赞。"
         self._schedule_auto_like(event.bot)
         return result
 
@@ -223,7 +214,6 @@ class zanwo(Star):
     async def subscribe_like(self, event: AiocqhttpMessageEvent):
         """订阅点赞"""
         sender_id = event.get_sender_id()
-        event.session_id
         if sender_id in self.subscribed_users:
             yield event.plain_result("你已经订阅点赞了哦~")
             return
@@ -250,6 +240,40 @@ class zanwo(Star):
             return
         users_str = "\n".join(self.subscribed_users).strip()
         yield event.plain_result(f"当前订阅点赞的用户ID列表：\n{users_str}")
+
+    # ---------- 黑名单管理 ----------
+    @filter.command("点赞拉黑")
+    async def add_blacklist(self, event: AiocqhttpMessageEvent):
+        """将发送者加入点赞黑名单"""
+        sender_id = event.get_sender_id()
+        if sender_id in self.black_list:
+            yield event.plain_result("你已经在黑名单中啦~")
+            return
+        self.black_list.append(sender_id)
+        self.config["black_list"] = self.black_list
+        self.config.save_config()
+        yield event.plain_result("已拉黑，不会再给你点赞啦~")
+
+    @filter.command("取消点赞拉黑")
+    async def remove_blacklist(self, event: AiocqhttpMessageEvent):
+        """将发送者移出点赞黑名单"""
+        sender_id = event.get_sender_id()
+        if sender_id not in self.black_list:
+            yield event.plain_result("你不在黑名单中哦~")
+            return
+        self.black_list.remove(sender_id)
+        self.config["black_list"] = self.black_list
+        self.config.save_config()
+        yield event.plain_result("已移出黑名单，可以点赞啦~")
+
+    @filter.command("点赞黑名单")
+    async def show_blacklist(self, event: AiocqhttpMessageEvent):
+        """查看当前点赞黑名单"""
+        if not self.black_list:
+            yield event.plain_result("黑名单为空~")
+            return
+        users_str = "\n".join(self.black_list)
+        yield event.plain_result(f"当前点赞黑名单：\n{users_str}")
 
     @filter.permission_type(PermissionType.ADMIN)
     @filter.command("谁赞了bot", alias={"谁赞了你"})
