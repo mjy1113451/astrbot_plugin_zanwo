@@ -87,7 +87,7 @@ class zanwo(Star):
 
     def _is_user_blacklisted(self, user_id: str) -> bool:
         """检查用户是否在黑名单中"""
-        return user_id in self.black_list
+        return str(user_id) in self.black_list
 
     async def _run_like(
         self, event: AiocqhttpMessageEvent, target_ids: list[str]
