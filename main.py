@@ -60,7 +60,7 @@ stranger_responses = [
     "astrbot_plugin_zanwo",
     "Futureppo",
     "发送 赞我 自动点赞",
-    "1.0.9",  # 版本号微调以示更新
+    "1.0.9"
     "https://github.com/Futureppo/astrbot_plugin_zanwo",
 )
 class zanwo(Star):
