@@ -76,12 +76,18 @@ class zanwo(Star):
         self.subscribed_users: list[str] = config.get("subscribed_users", [])
         # 点赞日期
         self.zanwo_date: Optional[str] = config.get("zanwo_date", None)
+        # 黑名单用户ID列表（字符串）
+        self.black_list: list[str] = config.get("black_list", [])
 
     def _is_group_allowed(self, event: AiocqhttpMessageEvent) -> bool:
         group_id = event.get_group_id()
         if group_id and self.white_list_groups:
             return str(group_id) in self.white_list_groups
         return True
+
+    def _is_user_blacklisted(self, user_id: str) -> bool:
+        """检查用户是否在黑名单中"""
+        return user_id in self.black_list
 
     async def _run_like(
         self, event: AiocqhttpMessageEvent, target_ids: list[str]
@@ -171,9 +177,14 @@ class zanwo(Star):
     @filter.regex(r"^赞.*")
     async def like_me(self, event: AiocqhttpMessageEvent):
         """给用户点赞"""
+        # 黑名单用户直接忽略，不回复也不点赞
+        sender_id = event.get_sender_id()
+        if self._is_user_blacklisted(sender_id):
+            return
+
         target_ids = []
         if event.message_str == "赞我":
-            target_ids.append(event.get_sender_id())
+            target_ids.append(sender_id)
         if not target_ids:
             target_ids = self.get_ats(event)
         result = await self._run_like(event, target_ids)
@@ -189,9 +200,14 @@ class zanwo(Star):
         Args:
             target(string): 点赞目标，可填 self、me、我，或明确的 QQ 号。未明确提供时默认给当前发言者点赞。
         """
+        # 黑名单用户直接忽略，不回复也不点赞
+        sender_id = event.get_sender_id()
+        if self._is_user_blacklisted(sender_id):
+            return
+
         normalized_target = target.strip().lower() if target else "self"
         if normalized_target in {"", "self", "me", "我", "自己", "我自己"}:
-            target_ids = [event.get_sender_id()]
+            target_ids = [sender_id]
         elif target.strip().isdigit():
             target_ids = [target.strip()]
         else:
@@ -229,7 +245,6 @@ class zanwo(Star):
     @filter.command("订阅点赞列表")
     async def like_list(self, event: AiocqhttpMessageEvent):
         """查看订阅点赞的用户ID列表"""
-
         if not self.subscribed_users:
             yield event.plain_result("当前没有订阅点赞的用户哦~")
             return
