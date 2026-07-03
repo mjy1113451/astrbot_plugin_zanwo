@@ -77,7 +77,7 @@ class zanwo(Star):
         # 点赞日期
         self.zanwo_date: Optional[str] = config.get("zanwo_date", None)
         # 黑名单用户ID列表（字符串）
-        self.black_list: list[str] = config.get("black_list", [])
+        self.black_list: set[str] ={str(uid) for uid in config.get("black_list", [])
 
     def _is_group_allowed(self, event: AiocqhttpMessageEvent) -> bool:
         group_id = event.get_group_id()
